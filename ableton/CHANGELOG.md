@@ -1,3 +1,7 @@
+## 1.1.0
+
+- Declares the KnobDeck Remote Script, so KnobDeck shows where to get it and whether it is connected.
+
 ## 1.0.0
 
 - First release, for Windows and macOS (Ableton Live has no Linux build). Needs KnobDeck with the

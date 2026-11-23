@@ -18,3 +18,7 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# LOCAL-DEV-PATCH: remove (and `cargo update -p knobdeck-sdk`) once knobdeck-sdk#19 is on master.
+[patch."https://github.com/Knobdeck/knobdeck-sdk.git"]
+knobdeck-sdk = { path = "../knobdeck-sdk" }

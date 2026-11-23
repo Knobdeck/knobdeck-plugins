@@ -228,6 +228,7 @@ fn main() {
         .author("KnobDeck")
         .description("Control Blender through the KnobDeck add-on: playback and frames, workspaces, viewport shading, overlays and X-ray, render, save, undo, brush size and strength, and the selected objects' transform on a dial.")
         .icon("app-icon.svg")
+        .companion("blender", "KnobDeck add-on for Blender", "https://github.com/Knobdeck/knobdeck-blender-companion")
         .ack_timeout_ms(5000)
         // Timeline
         .action(

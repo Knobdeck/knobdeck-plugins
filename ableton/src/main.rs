@@ -303,6 +303,7 @@ fn main() {
         .author("KnobDeck")
         .description("Control Ableton Live through the KnobDeck Remote Script: transport, record, metronome, loop, tempo and tap tempo, the mixer (master and track volume, pan, mute, solo, arm), scenes, track and scene selection, locators, undo, Capture MIDI and the selected device's parameters on dials, with live state on every key.")
         .icon("app-icon.svg")
+        .companion("ableton", "KnobDeck Remote Script for Ableton Live", "https://github.com/Knobdeck/knobdeck-ableton-companion")
         .ack_timeout_ms(6000)
         .setup("ableton-setup", None)
         .setup_inputs(vec![

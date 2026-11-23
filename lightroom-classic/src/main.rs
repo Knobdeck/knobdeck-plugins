@@ -143,7 +143,17 @@ fn on_off(on: bool) -> &'static str {
 }
 
 /// Push one change to the placed keys.
+/// The companion id in the registry (`Plugin::companion`).
+const COMPANION: &str = "lightroom";
+
 fn push(rt: &Runtime, u: &Update) {
+    // KnobDeck shows whether the Lightroom plug-in is linked on the plugin page and placed actions.
+    if let Update::Status(s) = u {
+        match s {
+            link::Status::Linked { lightroom, .. } => rt.companion_status(COMPANION, true, Some(format!("Lightroom Classic {lightroom}"))),
+            other => rt.companion_status(COMPANION, false, Some(link::not_linked(other))),
+        }
+    }
     match u {
         Update::Value(p, v) => {
             for (id, _, param, _, _) in BASIC {
@@ -285,6 +295,7 @@ fn main() {
         .author("KnobDeck")
         .description("Lightroom Classic on the dial: every Develop slider with its live value (press to reset), modules, next / previous photo, flags, ratings, colour labels, rotate, copy / paste settings, auto tone, undo and before / after, through the KnobDeck plug-in for Lightroom.")
         .icon("app-icon.svg")
+        .companion(COMPANION, "KnobDeck plug-in for Lightroom Classic", "https://github.com/Knobdeck/knobdeck-lightroom-companion")
         .ack_timeout_ms(6000)
         .setup("lightroom-classic-setup", None)
         .setup_inputs(vec![

@@ -203,6 +203,11 @@ fn main() {
         .author("KnobDeck")
         .description("Shared Chrome, Edge, Brave, Firefox and Zen controls, wheels, and zoom actions on Windows, macOS and Linux, through the KnobDeck browser extension.")
         .icon("app-icon.svg")
+        .companion(ext::COMPANION, "KnobDeck Browser Companion", "https://github.com/Knobdeck/knobdeck-browser-companion")
+        .on_ready(|_| {
+            ext::report_now();
+            Ok(())
+        })
         .ack_timeout_ms(5000);
 
     // Every action runs in the extension. The address bar, find and save have no extension API in

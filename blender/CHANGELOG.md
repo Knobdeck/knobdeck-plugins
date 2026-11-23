@@ -1,3 +1,7 @@
+## 1.1.0
+
+- Declares the KnobDeck add-on for Blender, so KnobDeck shows where to get it and whether it is connected.
+
 ## 1.0.1
 
 - A proper app icon in the Plugins store and sidebar (`icons/app-icon.svg`).
