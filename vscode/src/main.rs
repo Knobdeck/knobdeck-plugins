@@ -201,6 +201,7 @@ fn main() {
         .author("KnobDeck")
         .description("Control Visual Studio Code through the KnobDeck VS Code companion extension.")
         .icon("vscode-logo.svg")
+        .companion("vscode", "KnobDeck VS Code Companion", "https://github.com/Knobdeck/knobdeck-vscode-companion")
         .ack_timeout_ms(5000)
         .setup("vscode-setup", Some("setup.html"));
 

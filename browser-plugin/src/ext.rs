@@ -80,6 +80,21 @@ pub fn serve() {
     });
 }
 
+/// The companion id in the registry (`Plugin::companion`).
+pub const COMPANION: &str = "browser";
+
+/// Tell KnobDeck whether any browser's extension is connected (it shows it on the plugin page and
+/// on placed actions). Called on every connect and disconnect, and once at start.
+fn report(conns: &[Conn]) {
+    let labels: Vec<&str> = conns.iter().map(|c| c.info.label.as_str()).collect();
+    knobdeck_sdk::companion_status(COMPANION, !labels.is_empty(), (!labels.is_empty()).then(|| labels.join(", ")));
+}
+
+/// Report the current state (at start, so KnobDeck knows none is connected yet).
+pub fn report_now() {
+    report(&CONNS.lock().unwrap());
+}
+
 /// The connected browsers, oldest first.
 pub fn connected() -> Vec<Info> {
     CONNS.lock().unwrap().iter().map(|c| c.info.clone()).collect()
@@ -181,6 +196,7 @@ fn connection(stream: TcpStream, port: &str) -> Result<(), WsError> {
         let mut conns = CONNS.lock().unwrap();
         conns.retain(|c| c.info.id != id); // a reconnect replaces its stale entry (its thread then ends)
         conns.push(Conn { info: Info { id: id.clone(), key, label }, generation, outbox, pending: pending.clone() });
+        report(&conns);
     }
     ws.send(Message::text(json!({"type": "ready", "protocol": 1}).to_string()))?;
 
@@ -218,7 +234,11 @@ fn connection(stream: TcpStream, port: &str) -> Result<(), WsError> {
         }
     })();
     let mut conns = CONNS.lock().unwrap();
+    let before = conns.len();
     conns.retain(|c| c.generation != generation);
+    if conns.len() != before {
+        report(&conns);
+    }
     result
 }
 

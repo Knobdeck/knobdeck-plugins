@@ -1,3 +1,7 @@
+## 1.1.0
+
+- Tells KnobDeck whether the KnobDeck plug-in for Lightroom is linked, so the plugin page and placed actions can say when it isn't.
+
 ## 1.0.0
 
 - First release: Basic panel dials (Temp, Tint, Exposure, Contrast, Highlights, Shadows, Whites,

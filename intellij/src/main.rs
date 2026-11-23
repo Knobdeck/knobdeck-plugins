@@ -27,6 +27,15 @@ fn enc(s: &str) -> String {
         .collect()
 }
 
+/// The companion id in the registry (`Plugin::companion`).
+const COMPANION: &str = "intellij";
+
+/// Tell KnobDeck whether the IDE's companion answered (shown on the plugin page and on placed
+/// actions). Known only when an action runs: the plugin calls the IDE, nothing listens.
+fn report(reachable: bool, detail: Option<String>) {
+    knobdeck_sdk::companion_status(COMPANION, reachable, detail);
+}
+
 fn execute_idea_action(action_id: &str, inputs: &Value) -> Result {
     let port = match inputs["port"].as_str().map(str::trim) {
         Some(p) if !p.is_empty() => p.to_string(),
@@ -41,7 +50,12 @@ fn execute_idea_action(action_id: &str, inputs: &Value) -> Result {
     if !password.is_empty() {
         req = req.set("Authorization", &password);
     }
-    match req.call() {
+    let outcome = req.call();
+    match &outcome {
+        Err(ureq::Error::Transport(_)) => report(false, Some(format!("no IDE answered on port {port}"))),
+        _ => report(true, None),
+    }
+    match outcome {
         Ok(_) => Ok(()),
         Err(ureq::Error::Status(401 | 403, _)) => {
             knobdeck_sdk::mark_setup_required("The IntelliJ companion rejected the password");
@@ -94,6 +108,7 @@ fn main() {
         .author("KnobDeck")
         .description("Control IntelliJ IDEs through the KnobDeck IntelliJ companion plugin.")
         .icon("intellij-logo.svg")
+        .companion(COMPANION, "KnobDeck Companion for JetBrains IDEs", "https://github.com/Knobdeck/knobdeck-intellij-companion")
         .ack_timeout_ms(5000)
         .setup("intellij-setup", Some("setup.html"));
 
