@@ -14,8 +14,13 @@ use std::time::Duration;
 
 const POLL: Duration = Duration::from_secs(2);
 const AUTO: &str = "__auto__";
-/// Cover size sent to KnobDeck (keys are smaller still).
-const ART_PX: u32 = 144;
+/// Cover size sent to KnobDeck: sharp on a phone tile spanning 2×2 cells (~170 dp at 3× density
+/// would want ~500 px; 384 px is close and keeps a cover at ~30–50 KB). Sent once per track: the
+/// SDK only re-sends a changed visual, and the host's per-tile cache keeps other tiles' updates
+/// (Position every 2 s) from carrying it.
+const ART_PX: u32 = 384;
+/// JPEG quality of the cover (the encoder's default, 75, smears gradients on a big tile).
+const ART_QUALITY: u8 = 85;
 
 /// Session for an action: the chosen player, or with "Whatever is playing" the playing one (else
 /// the system's current one).
@@ -85,9 +90,15 @@ pub fn percent_decode(s: &str) -> String {
 
 pub fn shrink(bytes: &[u8]) -> Option<String> {
     let img = image::load_from_memory(bytes).ok()?;
-    let small = img.thumbnail(ART_PX, ART_PX).to_rgb8();
+    // Lanczos keeps lettering on covers crisp; a cover already small enough is never scaled up.
+    let small = if img.width() > ART_PX || img.height() > ART_PX {
+        img.resize(ART_PX, ART_PX, image::imageops::FilterType::Lanczos3)
+    } else {
+        img
+    }
+    .to_rgb8();
     let mut out = std::io::Cursor::new(vec![]);
-    small.write_to(&mut out, image::ImageFormat::Jpeg).ok()?;
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, ART_QUALITY).encode_image(&small).ok()?;
     Some(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(out.into_inner())))
 }
 
@@ -232,6 +243,17 @@ mod tests {
         img.write_to(&mut png, image::ImageFormat::Png).unwrap();
         let uri = shrink(&png.into_inner()).unwrap();
         assert!(uri.starts_with("data:image/jpeg;base64,"));
-        assert!(uri.len() < 20_000);
+        assert!(uri.len() < 60_000);
+        let jpeg = base64::engine::general_purpose::STANDARD.decode(uri.split_once(',').unwrap().1).unwrap();
+        let out = image::load_from_memory(&jpeg).unwrap();
+        assert_eq!((out.width(), out.height()), (ART_PX, 256)); // aspect kept
+
+        // A small cover stays its own size.
+        let tiny = image::RgbImage::from_pixel(100, 100, image::Rgb([0, 0, 0]));
+        let mut png = std::io::Cursor::new(vec![]);
+        tiny.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let uri = shrink(&png.into_inner()).unwrap();
+        let jpeg = base64::engine::general_purpose::STANDARD.decode(uri.split_once(',').unwrap().1).unwrap();
+        assert_eq!(image::load_from_memory(&jpeg).unwrap().width(), 100);
     }
 }
