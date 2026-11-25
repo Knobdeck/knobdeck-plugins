@@ -142,12 +142,13 @@ mod app {
                     .icon(ICON)
                     .inputs(vec![input::checkbox("artwork", "Show the artwork").default_value(true), input::checkbox("press", "Press to play / pause").default_value(true)])
                     .live(POLL, |ic| {
-                        let Some(s) = status()? else { return Ok(Visual::new().label("Music closed").icon(ICON)) };
+                        let Some(s) = status()? else { return Ok(Visual::new().label("Music closed").no_icon()) };
                         if s.state == "stopped" {
-                            return Ok(Visual::new().label("Nothing playing").icon(ICON));
+                            return Ok(Visual::new().label("Nothing playing").no_icon());
                         }
                         let art = if ic.input_bool("artwork") { artwork(&s) } else { None };
-                        Ok(Visual::new().label(script::track_label(&s)).icon(art.unwrap_or_else(|| if s.playing() { ICON.into() } else { "pause".into() })))
+                        let v = Visual::new().label(script::track_label(&s));
+                        Ok(match art { Some(cover) => v.icon(cover), None => v.no_icon() })
                     })
                     .on_press(|ctx| if ctx.input_bool("press") { play_pause() } else { Ok(()) }),
             )

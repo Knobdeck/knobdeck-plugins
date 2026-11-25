@@ -158,9 +158,11 @@ fn main() {
                 .icon("disc-3")
                 .inputs(vec![player_input(), input::checkbox("cover", "Show the cover").default_value(true), input::checkbox("press", "Press to play / pause").default_value(true)])
                 .live(POLL, |ic| {
-                    let Ok(s) = session(&ic.inputs) else { return Ok(Visual::new().label("Nothing playing").icon("disc-3")) };
+                    let Ok(s) = session(&ic.inputs) else { return Ok(Visual::new().label("Nothing playing").no_icon()) };
                     let icon = if ic.input_bool("cover") { art(&s) } else { None };
-                    Ok(Visual::new().label(track_label(&s)).icon(icon.unwrap_or_else(|| if s.playing { "disc-3".into() } else { "pause".into() })))
+                    // A cover when there is one to show; otherwise drop it so the tile's own icon shows.
+                    let v = Visual::new().label(track_label(&s));
+                    Ok(match icon { Some(cover) => v.icon(cover), None => v.no_icon() })
                 })
                 .on_press(|ctx| if ctx.input_bool("press") { control(ctx, Cmd::PlayPause) } else { Ok(()) }),
         )

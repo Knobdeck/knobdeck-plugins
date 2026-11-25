@@ -162,12 +162,12 @@ fn main() {
                     let s = state()?;
                     let t = ytmd::title(&s);
                     if t.is_empty() {
-                        return Ok(Visual::new().label("Nothing playing").icon("music"));
+                        return Ok(Visual::new().label("Nothing playing").no_icon());
                     }
                     let mut v = Visual::new().label(format!("{t}\n{}", ytmd::author(&s)));
                     v = match ytmd::thumbnail(&s).filter(|_| ic.input_bool("art")).and_then(|u| art(&u)) {
                         Some(uri) => v.icon(uri),
-                        None => v.icon(if ytmd::playing(&s) { "pause" } else { "play" }),
+                        None => v.no_icon(),
                     };
                     Ok(v)
                 })
