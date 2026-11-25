@@ -304,10 +304,13 @@ fn gauge(pct: f64, color: &str) -> String {
     ))
 }
 
+/// The tile's value (its title shows it where the user put `{0}`, a new tile starts as
+/// `Claude {0}`): the window's use and when it resets, or why there is none. The title is the
+/// user's; only the value and the gauge come from here.
 fn limits_visual(p: Provider, window: &str) -> Visual {
-    let (name, color) = match p {
-        Provider::Claude => ("Claude", "#D97757"),
-        Provider::Codex => ("Codex", "#6C7BFF"),
+    let color = match p {
+        Provider::Claude => "#D97757",
+        Provider::Codex => "#6C7BFF",
     };
     let d = data();
     let snap = limits::read(&d, p);
@@ -325,15 +328,11 @@ fn limits_visual(p: Provider, window: &str) -> Visual {
                 w.name()
             };
             Visual::new()
-                .label(format!("{name} {wname} {:.0}%{reset}", w.used))
+                .value(format!("{wname} {:.0}%{reset}", w.used))
                 .icon(gauge(w.used, color))
         }
-        None if !snap.wins.is_empty() => Visual::new()
-            .label(format!("{name} · not on this plan"))
-            .icon("circle-off"),
-        None => Visual::new()
-            .label(format!("{name} · {}", limits::why_empty(&d, p)))
-            .icon("circle-alert"),
+        None if !snap.wins.is_empty() => Visual::new().value("not on this plan").icon("circle-off"),
+        None => Visual::new().value(limits::why_empty(&d, p)).icon("circle-alert"),
     }
 }
 
@@ -343,7 +342,12 @@ fn limits_action(
     p: Provider,
     windows: &'static [(&'static str, &'static str)],
 ) -> Action {
+    let title = match p {
+        Provider::Claude => "Claude {0}",
+        Provider::Codex => "Codex {0}",
+    };
     Action::button(id, label)
+        .title(title)
         .icon("gauge")
         .inputs(vec![
             input::select("window", "Usage type", windows).with("default", windows[0].0)
