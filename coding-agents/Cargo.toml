@@ -1,6 +1,6 @@
 [package]
 name = "coding-agents"
-version = "1.0.1"
+version = "1.1.0"
 edition = "2021"
 publish = false
 
@@ -8,5 +8,7 @@ publish = false
 knobdeck-sdk = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
+base64.workspace = true
+ureq.workspace = true
 # Codex's config.toml, edited without losing the user's formatting and comments.
 toml_edit = "0.22"

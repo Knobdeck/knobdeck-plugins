@@ -11,13 +11,21 @@ use std::path::{Path, PathBuf};
 pub const HOOK_NAME: &str = "knobdeck-agent-hook";
 
 pub fn hook_path(data: &Path) -> PathBuf {
-    data.join("bin").join(if cfg!(windows) { format!("{HOOK_NAME}.exe") } else { HOOK_NAME.to_string() })
+    data.join("bin").join(if cfg!(windows) {
+        format!("{HOOK_NAME}.exe")
+    } else {
+        HOOK_NAME.to_string()
+    })
 }
 
 /// The plugin binary next to this program (setup and plugin ship side by side).
 pub fn plugin_binary() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let name = if cfg!(windows) { "coding-agents.exe" } else { "coding-agents" };
+    let name = if cfg!(windows) {
+        "coding-agents.exe"
+    } else {
+        "coding-agents"
+    };
     let p = exe.with_file_name(name);
     if p.is_file() {
         Ok(p)
@@ -50,6 +58,26 @@ pub fn refresh_hook_binary(from: &Path, data: &Path) -> std::io::Result<bool> {
         fs::set_permissions(&to, fs::Permissions::from_mode(0o755))?;
     }
     Ok(true)
+}
+
+/// The user's own status line, kept while KnobDeck's wraps it.
+pub fn original_status_line_path(data: &Path) -> PathBuf {
+    data.join("statusline-original.json")
+}
+
+/// What setup does with Claude Code's `statusLine` (it carries the plan limits to KnobDeck).
+pub enum StatusLine {
+    Keep,
+    /// KnobDeck's command; any other status line is wrapped (`wrapped`) and keeps working.
+    Set {
+        cmd: String,
+    },
+    /// Put back what was there (`None`: there was nothing).
+    Restore(Option<Value>),
+}
+
+fn status_line_is_ours(v: &Value) -> bool {
+    v["command"].as_str().is_some_and(|c| c.contains(HOOK_NAME))
 }
 
 /// The command line an agent runs. Forward slashes on Windows too: Claude Code runs hooks
@@ -92,15 +120,28 @@ fn claude_hooks(approval_wait: u64) -> Vec<(&'static str, u64, bool)> {
 }
 
 fn is_ours(group: &Value) -> bool {
-    group["hooks"].as_array().is_some_and(|hs| hs.iter().any(|h| h["command"].as_str().is_some_and(|c| c.contains(HOOK_NAME))))
+    group["hooks"].as_array().is_some_and(|hs| {
+        hs.iter()
+            .any(|h| h["command"].as_str().is_some_and(|c| c.contains(HOOK_NAME)))
+    })
 }
 
 /// `settings` with KnobDeck's hook groups removed, and added again when `install`.
-pub fn edit_claude_settings(mut settings: Value, cmd: &str, approval_wait: u64, install: bool) -> Result<Value, String> {
+pub fn edit_claude_settings(
+    mut settings: Value,
+    cmd: &str,
+    approval_wait: u64,
+    install: bool,
+    status: StatusLine,
+) -> Result<Value, String> {
     if !settings.is_object() {
         return Err("Claude Code's settings.json isn't a JSON object".into());
     }
-    let hooks = settings.as_object_mut().unwrap().entry("hooks").or_insert_with(|| json!({}));
+    let hooks = settings
+        .as_object_mut()
+        .unwrap()
+        .entry("hooks")
+        .or_insert_with(|| json!({}));
     let Some(hooks) = hooks.as_object_mut() else {
         return Err("\"hooks\" in Claude Code's settings.json isn't an object".into());
     };
@@ -118,7 +159,11 @@ pub fn edit_claude_settings(mut settings: Value, cmd: &str, approval_wait: u64, 
             let groups = hooks.entry(event).or_insert_with(|| json!([]));
             match groups.as_array_mut() {
                 Some(arr) => arr.push(json!({"hooks": [h]})),
-                None => return Err(format!("\"hooks.{event}\" in Claude Code's settings.json isn't a list")),
+                None => {
+                    return Err(format!(
+                        "\"hooks.{event}\" in Claude Code's settings.json isn't a list"
+                    ))
+                }
             }
         }
     }
@@ -126,40 +171,123 @@ pub fn edit_claude_settings(mut settings: Value, cmd: &str, approval_wait: u64, 
     if hooks.is_empty() {
         settings.as_object_mut().unwrap().remove("hooks");
     }
+    let obj = settings.as_object_mut().unwrap();
+    match status {
+        StatusLine::Keep => {}
+        StatusLine::Set { cmd } => {
+            // Keep the user's other status line options (padding…); only the command is ours.
+            let mut sl = obj
+                .get("statusLine")
+                .filter(|v| v.is_object() && !status_line_is_ours(v))
+                .cloned()
+                .unwrap_or_else(|| json!({"type": "command"}));
+            if status_line_is_ours(&obj.get("statusLine").cloned().unwrap_or_default()) {
+                sl = obj["statusLine"].clone();
+            }
+            sl["type"] = json!("command");
+            sl["command"] = json!(cmd);
+            obj.insert("statusLine".into(), sl);
+        }
+        StatusLine::Restore(original) => {
+            if obj.get("statusLine").is_some_and(status_line_is_ours) {
+                match original {
+                    Some(o) => {
+                        obj.insert("statusLine".into(), o);
+                    }
+                    None => {
+                        obj.remove("statusLine");
+                    }
+                }
+            }
+        }
+    }
     Ok(settings)
 }
 
 /// Back up a config once before KnobDeck first changes it.
 fn backup_once(path: &Path) {
-    let bak = path.with_extension(format!("{}.knobdeck-backup", path.extension().and_then(|e| e.to_str()).unwrap_or("bak")));
+    let bak = path.with_extension(format!(
+        "{}.knobdeck-backup",
+        path.extension().and_then(|e| e.to_str()).unwrap_or("bak")
+    ));
     if path.is_file() && !bak.exists() {
         let _ = fs::copy(path, bak);
     }
 }
 
-pub fn setup_claude(data: &Path, approval_wait: u64, install: bool) -> Result<bool, String> {
+pub fn setup_claude(
+    data: &Path,
+    approval_wait: u64,
+    install: bool,
+    limits: bool,
+) -> Result<bool, String> {
     let path = claude_settings_path().ok_or("Couldn't find your home folder")?;
     let current = match fs::read_to_string(&path) {
         Ok(t) if t.trim().is_empty() => Value::Object(Map::new()),
-        Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{} isn't valid JSON ({e}); fix it and set up again", path.display()))?,
+        Ok(t) => serde_json::from_str(&t).map_err(|e| {
+            format!(
+                "{} isn't valid JSON ({e}); fix it and set up again",
+                path.display()
+            )
+        })?,
         Err(_) if !install => return Ok(false),
         Err(_) => Value::Object(Map::new()),
     };
-    let next = edit_claude_settings(current.clone(), &command(data, "claude"), approval_wait, install)?;
+    let status = if install && limits {
+        // A status line that isn't ours is kept aside and still shown, through ours.
+        if let Some(sl) = current
+            .get("statusLine")
+            .filter(|v| v.is_object() && !status_line_is_ours(v) && v["command"].is_string())
+        {
+            let _ = crate::store::write_atomic(
+                &original_status_line_path(data),
+                sl.to_string().as_bytes(),
+            );
+        }
+        StatusLine::Set {
+            cmd: command(data, "statusline"),
+        }
+    } else if current.get("statusLine").is_some_and(status_line_is_ours) {
+        let original = fs::read_to_string(original_status_line_path(data))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok());
+        StatusLine::Restore(original)
+    } else {
+        StatusLine::Keep
+    };
+    let restoring = matches!(status, StatusLine::Restore(_));
+    let next = edit_claude_settings(
+        current.clone(),
+        &command(data, "claude"),
+        approval_wait,
+        install,
+        status,
+    )?;
+    if restoring {
+        let _ = fs::remove_file(original_status_line_path(data));
+    }
     if next == current {
         return Ok(false);
     }
     backup_once(&path);
     let text = serde_json::to_string_pretty(&next).map_err(|e| e.to_string())? + "\n";
-    crate::store::write_atomic(&path, text.as_bytes()).map_err(|e| format!("Couldn't write {}: {e}", path.display()))?;
+    crate::store::write_atomic(&path, text.as_bytes())
+        .map_err(|e| format!("Couldn't write {}: {e}", path.display()))?;
     Ok(true)
 }
 
 /// `config.toml` with KnobDeck's `notify` set (or removed when not `install`). Another program
 /// already set as `notify` is left alone and reported: Codex runs only one.
 pub fn edit_codex_config(text: &str, cmd_path: &str, install: bool) -> Result<String, String> {
-    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("Codex's config.toml can't be read ({e})"))?;
-    let ours = |v: &toml_edit::Item| v.as_array().and_then(|a| a.get(0)).and_then(|v| v.as_str()).is_some_and(|p| p.contains(HOOK_NAME));
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| format!("Codex's config.toml can't be read ({e})"))?;
+    let ours = |v: &toml_edit::Item| {
+        v.as_array()
+            .and_then(|a| a.get(0))
+            .and_then(|v| v.as_str())
+            .is_some_and(|p| p.contains(HOOK_NAME))
+    };
     match doc.get("notify") {
         Some(item) if !ours(item) => {
             if install {
@@ -195,7 +323,8 @@ pub fn setup_codex(data: &Path, install: bool) -> Result<bool, String> {
         return Ok(false);
     }
     backup_once(&path);
-    crate::store::write_atomic(&path, next.as_bytes()).map_err(|e| format!("Couldn't write {}: {e}", path.display()))?;
+    crate::store::write_atomic(&path, next.as_bytes())
+        .map_err(|e| format!("Couldn't write {}: {e}", path.display()))?;
     Ok(true)
 }
 
@@ -207,16 +336,71 @@ mod tests {
     fn claude_settings_round_trip() {
         let user = json!({"model": "opus", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}});
         let cmd = "\"/d/bin/knobdeck-agent-hook\" hook claude";
-        let installed = edit_claude_settings(user.clone(), cmd, 30, true).unwrap();
+        let installed =
+            edit_claude_settings(user.clone(), cmd, 30, true, StatusLine::Keep).unwrap();
         assert_eq!(installed["hooks"]["Stop"].as_array().unwrap().len(), 2);
-        assert_eq!(installed["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"], 45);
-        assert_eq!(installed["hooks"]["PostToolUse"][0]["hooks"][0]["async"], true);
+        assert_eq!(
+            installed["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+            45
+        );
+        assert_eq!(
+            installed["hooks"]["PostToolUse"][0]["hooks"][0]["async"],
+            true
+        );
         // Installing twice changes nothing.
-        assert_eq!(edit_claude_settings(installed.clone(), cmd, 30, true).unwrap(), installed);
+        assert_eq!(
+            edit_claude_settings(installed.clone(), cmd, 30, true, StatusLine::Keep).unwrap(),
+            installed
+        );
         // Removing leaves the user's own hooks and settings exactly as they were.
-        assert_eq!(edit_claude_settings(installed, cmd, 30, false).unwrap(), user);
-        assert_eq!(edit_claude_settings(json!({}), cmd, 30, false).unwrap(), json!({}));
-        assert!(edit_claude_settings(json!([]), cmd, 30, true).is_err());
+        assert_eq!(
+            edit_claude_settings(installed, cmd, 30, false, StatusLine::Keep).unwrap(),
+            user
+        );
+        assert_eq!(
+            edit_claude_settings(json!({}), cmd, 30, false, StatusLine::Keep).unwrap(),
+            json!({})
+        );
+        assert!(edit_claude_settings(json!([]), cmd, 30, true, StatusLine::Keep).is_err());
+    }
+
+    #[test]
+    fn status_line_wraps_and_restores() {
+        let cmd = "\"/d/bin/knobdeck-agent-hook\" hook statusline";
+        let set = || StatusLine::Set { cmd: cmd.into() };
+        // Nothing before: ours is added and removed again.
+        let none = json!({"model": "opus"});
+        let on = edit_claude_settings(none.clone(), cmd, 30, true, set()).unwrap();
+        assert_eq!(on["statusLine"], json!({"type": "command", "command": cmd}));
+        assert_eq!(
+            edit_claude_settings(on.clone(), cmd, 30, true, set()).unwrap(),
+            on
+        );
+        assert_eq!(
+            edit_claude_settings(on, cmd, 30, false, StatusLine::Restore(None)).unwrap(),
+            none
+        );
+        // The user's own: options stay, the command is ours, the original comes back.
+        let own = json!({"type": "command", "command": "~/sl.sh", "padding": 1});
+        let user = json!({"statusLine": own});
+        let on = edit_claude_settings(user.clone(), cmd, 30, true, set()).unwrap();
+        assert_eq!(
+            on["statusLine"],
+            json!({"type": "command", "command": cmd, "padding": 1})
+        );
+        assert_eq!(
+            edit_claude_settings(on.clone(), cmd, 30, true, set()).unwrap(),
+            on
+        );
+        assert_eq!(
+            edit_claude_settings(on, cmd, 30, false, StatusLine::Restore(Some(own))).unwrap(),
+            user
+        );
+        // A status line that isn't ours is never touched by Restore.
+        assert_eq!(
+            edit_claude_settings(user.clone(), cmd, 30, false, StatusLine::Restore(None)).unwrap(),
+            user
+        );
     }
 
     #[test]
@@ -227,10 +411,21 @@ mod tests {
         assert_eq!(doc["notify"].as_array().unwrap().len(), 3);
         // Still a top-level key, not inside [profiles.fast].
         assert!(doc["profiles"]["fast"].get("notify").is_none());
-        assert_eq!(edit_codex_config(&added, "/d/bin/knobdeck-agent-hook", true).unwrap(), added);
-        assert_eq!(edit_codex_config(&added, "/d/bin/knobdeck-agent-hook", false).unwrap().trim(), user.trim());
+        assert_eq!(
+            edit_codex_config(&added, "/d/bin/knobdeck-agent-hook", true).unwrap(),
+            added
+        );
+        assert_eq!(
+            edit_codex_config(&added, "/d/bin/knobdeck-agent-hook", false)
+                .unwrap()
+                .trim(),
+            user.trim()
+        );
         let other = "notify = [\"my-notifier\"]\n";
         assert!(edit_codex_config(other, "/d/bin/knobdeck-agent-hook", true).is_err());
-        assert_eq!(edit_codex_config(other, "/d/bin/knobdeck-agent-hook", false).unwrap(), other);
+        assert_eq!(
+            edit_codex_config(other, "/d/bin/knobdeck-agent-hook", false).unwrap(),
+            other
+        );
     }
 }

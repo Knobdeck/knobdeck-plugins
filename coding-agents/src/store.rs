@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -89,7 +92,13 @@ impl Session {
         if let Some(t) = self.title.as_deref().filter(|t| !t.trim().is_empty()) {
             return t.trim().to_string();
         }
-        let base = self.cwd.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or_default().to_string();
+        let base = self
+            .cwd
+            .trim_end_matches(['/', '\\'])
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or_default()
+            .to_string();
         if base.is_empty() {
             agent_name(&self.agent).to_string()
         } else {
@@ -145,7 +154,16 @@ pub fn approvals_dir(data: &Path) -> PathBuf {
 
 /// A file name made only of safe characters (session ids come from the agents).
 pub fn safe(s: &str) -> String {
-    s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).take(80).collect()
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(80)
+        .collect()
 }
 
 fn session_path(data: &Path, agent: &str, id: &str) -> PathBuf {
@@ -169,12 +187,25 @@ pub fn read_session(data: &Path, agent: &str, id: &str) -> Option<Session> {
 }
 
 pub fn write_session(data: &Path, s: &Session) -> std::io::Result<()> {
-    write_atomic(&session_path(data, &s.agent, &s.id), &serde_json::to_vec(s).unwrap_or_default())
+    write_atomic(
+        &session_path(data, &s.agent, &s.id),
+        &serde_json::to_vec(s).unwrap_or_default(),
+    )
 }
 
 /// Read, change and write back one session (created when new).
-pub fn update_session(data: &Path, agent: &str, id: &str, f: impl FnOnce(&mut Session)) -> std::io::Result<Session> {
-    let mut s = read_session(data, agent, id).unwrap_or_else(|| Session { agent: agent.into(), id: id.into(), since: now_ms(), ..Default::default() });
+pub fn update_session(
+    data: &Path,
+    agent: &str,
+    id: &str,
+    f: impl FnOnce(&mut Session),
+) -> std::io::Result<Session> {
+    let mut s = read_session(data, agent, id).unwrap_or_else(|| Session {
+        agent: agent.into(),
+        id: id.into(),
+        since: now_ms(),
+        ..Default::default()
+    });
     f(&mut s);
     s.updated = now_ms();
     write_session(data, &s)?;
@@ -186,11 +217,18 @@ pub fn remove_session(data: &Path, agent: &str, id: &str) {
 }
 
 fn json_files(dir: &Path) -> impl Iterator<Item = PathBuf> {
-    fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json"))
+    fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
 }
 
 pub fn load_sessions(data: &Path) -> Vec<Session> {
-    json_files(&sessions_dir(data)).filter_map(|p| serde_json::from_slice(&fs::read(p).ok()?).ok()).collect()
+    json_files(&sessions_dir(data))
+        .filter_map(|p| serde_json::from_slice(&fs::read(p).ok()?).ok())
+        .collect()
 }
 
 /// Waiting permission requests, oldest first (answered ones excluded).
@@ -204,16 +242,24 @@ pub fn pending(data: &Path) -> Vec<Pending> {
 }
 
 pub fn write_pending(data: &Path, p: &Pending) -> std::io::Result<()> {
-    write_atomic(&approvals_dir(data).join(format!("{}.json", safe(&p.id))), &serde_json::to_vec(p).unwrap_or_default())
+    write_atomic(
+        &approvals_dir(data).join(format!("{}.json", safe(&p.id))),
+        &serde_json::to_vec(p).unwrap_or_default(),
+    )
 }
 
 pub fn answer(data: &Path, request: &str, allow: bool) -> std::io::Result<()> {
-    write_atomic(&approvals_dir(data).join(format!("{}.answer", safe(request))), if allow { b"allow" } else { b"deny" })
+    write_atomic(
+        &approvals_dir(data).join(format!("{}.answer", safe(request))),
+        if allow { b"allow" } else { b"deny" },
+    )
 }
 
 /// `Some(true)` allowed, `Some(false)` denied, `None` not answered yet.
 pub fn read_answer(data: &Path, request: &str) -> Option<bool> {
-    fs::read_to_string(approvals_dir(data).join(format!("{}.answer", safe(request)))).ok().map(|s| s.trim() == "allow")
+    fs::read_to_string(approvals_dir(data).join(format!("{}.answer", safe(request))))
+        .ok()
+        .map(|s| s.trim() == "allow")
 }
 
 pub fn clear_request(data: &Path, request: &str) {
@@ -234,7 +280,11 @@ pub fn approvals_flag(data: &Path) -> PathBuf {
 
 /// A file touched within `max` (by modification time).
 pub fn fresh(path: &Path, max: Duration) -> bool {
-    fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < max)
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < max)
 }
 
 /// Drop what is left over: requests from hooks that are gone, sessions not heard from in a day.
@@ -246,7 +296,12 @@ pub fn prune(data: &Path) {
             remove_session(data, &s.agent, &s.id);
         }
     }
-    for p in fs::read_dir(approvals_dir(data)).into_iter().flatten().flatten().map(|e| e.path()) {
+    for p in fs::read_dir(approvals_dir(data))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+    {
         if !fresh(&p, Duration::from_secs(15 * 60)) {
             let _ = fs::remove_file(p);
         }
@@ -270,7 +325,14 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].name(), "proj");
         assert_eq!(all[0].status, Status::Working);
-        let p = Pending { id: "r1".into(), agent: "claude".into(), session: "a/b".into(), tool: "Bash".into(), detail: "ls".into(), at: 1 };
+        let p = Pending {
+            id: "r1".into(),
+            agent: "claude".into(),
+            session: "a/b".into(),
+            tool: "Bash".into(),
+            detail: "ls".into(),
+            at: 1,
+        };
         write_pending(&dir, &p).unwrap();
         assert_eq!(pending(&dir).len(), 1);
         answer(&dir, "r1", true).unwrap();
@@ -283,9 +345,16 @@ mod tests {
 
     #[test]
     fn names() {
-        let s = Session { agent: "codex".into(), cwd: "C:\\code\\app\\".into(), ..Default::default() };
+        let s = Session {
+            agent: "codex".into(),
+            cwd: "C:\\code\\app\\".into(),
+            ..Default::default()
+        };
         assert_eq!(s.name(), "app");
-        let s = Session { agent: "codex".into(), ..Default::default() };
+        let s = Session {
+            agent: "codex".into(),
+            ..Default::default()
+        };
         assert_eq!(s.name(), "Codex");
     }
 }

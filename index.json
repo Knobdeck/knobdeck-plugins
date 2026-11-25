@@ -20,15 +20,6 @@
       ],
       "sort": 37
     },
-    "ai-stats": {
-      "name": "AI Stats",
-      "summary": "Claude and Codex plan limits and 30-day token usage.",
-      "tags": [
-        "Developer tools",
-        "AI"
-      ],
-      "sort": 90
-    },
     "apple-music": {
       "name": "Apple Music",
       "summary": "Music app playback, shuffle, repeat, favorites, volume dial, playlists and what is playing.",
