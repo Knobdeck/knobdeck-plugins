@@ -108,8 +108,8 @@ fn main() {
             Action::button("now-playing", "Now Playing")
                 .icon("music")
                 .live(POLL, |_| Ok(match os::now_playing() {
-                    Ok(n) => Visual::new().label(playing_label(&n)).icon(if n.playing { "music" } else { "pause" }),
-                    Err(e) => Visual::new().label(e.message().to_string()).icon("music"),
+                    Ok(n) => Visual::new().label(playing_label(&n)).no_icon(),
+                    Err(e) => Visual::new().label(e.message().to_string()).no_icon(),
                 }))
                 .on_press(|_| os::play_pause()),
         )

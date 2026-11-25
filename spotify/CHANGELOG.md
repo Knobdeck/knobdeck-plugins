@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2
+
+- The Now Playing tile no longer overrides the icon you chose with a built-in music or pause icon.
+
 ## 1.3.1
 
 - A proper app icon in the Plugins store and sidebar (`icons/app-icon.svg`).

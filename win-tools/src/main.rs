@@ -718,7 +718,7 @@ mod app {
                         let (name, pct) = stats::read(&ic.input_str("stat"))?;
                         Ok(match pct {
                             Some(p) => Visual::new().label(format!("{name} {p:.0}%")).icon(stats::gauge(p)),
-                            None => Visual::new().label(format!("{name} …")),
+                            None => Visual::new().label(format!("{name} …")).no_icon(),
                         })
                     }),
             )
