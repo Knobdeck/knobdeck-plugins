@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.0
+
+- **Claude Limits** and **Codex Limits** send their numbers as the tile's value: the title is yours, and `{0}` (or `%0%`) in it shows where the usage goes (`5 Hour {0}`). A new key starts as `Claude {0}` / `Codex {0}`; an empty title shows the usage alone. Older KnobDeck versions still get the numbers as the title.
+
 ## 1.1.0
 
 - **Claude Limits** and **Codex Limits** keys (5-hour, weekly and, for Claude, Fable gauges), replacing the AI Stats plugin.
