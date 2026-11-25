@@ -19,17 +19,64 @@ fn data_dir() -> Option<PathBuf> {
     }
     let exe = std::env::current_exe().ok()?;
     let bin = exe.parent()?;
-    (bin.file_name()? == "bin").then(|| bin.parent().map(Path::to_path_buf)).flatten()
+    (bin.file_name()? == "bin")
+        .then(|| bin.parent().map(Path::to_path_buf))
+        .flatten()
+}
+
+/// Claude Code's status line command: record the plan limits it passes in, then run the user's own
+/// status line (kept by setup in `statusline-original.json`) with the same input and show its output.
+fn status_line(data: &Path) {
+    let mut raw = String::new();
+    let _ = std::io::stdin()
+        .take(4 * 1024 * 1024)
+        .read_to_string(&mut raw);
+    if let Ok(ev) = serde_json::from_str::<Value>(&raw) {
+        crate::limits::record_claude_status_line(data, &ev);
+    }
+    let original = std::fs::read_to_string(crate::install::original_status_line_path(data))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    let Some(cmd) = original.as_ref().and_then(|o| o["command"].as_str()) else {
+        return;
+    };
+    use std::process::{Command, Stdio};
+    let mut c = if cfg!(windows) {
+        Command::new("cmd")
+    } else {
+        Command::new("sh")
+    };
+    c.args([if cfg!(windows) { "/C" } else { "-c" }, cmd])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Ok(mut child) = c.spawn() {
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(raw.as_bytes());
+        }
+        if let Ok(out) = child.wait_with_output() {
+            print!("{}", String::from_utf8_lossy(&out.stdout));
+        }
+    }
 }
 
 pub fn run(args: &[String]) -> ! {
     if let Some(data) = data_dir() {
+        if args.first().map(String::as_str) == Some("statusline") {
+            status_line(&data);
+            std::process::exit(0);
+        }
         let agent = args.first().map(String::as_str).unwrap_or("claude");
         let event = match agent {
-            "codex" => args.get(1).and_then(|a| serde_json::from_str::<Value>(a).ok()),
+            "codex" => args
+                .get(1)
+                .and_then(|a| serde_json::from_str::<Value>(a).ok()),
             _ => {
                 let mut raw = String::new();
-                let _ = std::io::stdin().take(4 * 1024 * 1024).read_to_string(&mut raw);
+                let _ = std::io::stdin()
+                    .take(4 * 1024 * 1024)
+                    .read_to_string(&mut raw);
                 serde_json::from_str::<Value>(&raw).ok()
             }
         };
@@ -95,7 +142,9 @@ fn claude(data: &Path, ev: &Value) -> Option<String> {
         "UserPromptSubmit" => with(Some(Status::Working)),
         // A tool ran: back to work after an approval or a question.
         "PostToolUse" | "PostToolUseFailure" => {
-            if store::read_session(data, "claude", id).is_none_or(|sess| sess.status != Status::Working) {
+            if store::read_session(data, "claude", id)
+                .is_none_or(|sess| sess.status != Status::Working)
+            {
                 with(Some(Status::Working));
             }
         }
@@ -123,10 +172,29 @@ fn claude(data: &Path, ev: &Value) -> Option<String> {
 
 /// What a request is about, for a key: the command, the file, the address…
 fn detail(tool_input: &Value) -> String {
-    for key in ["command", "file_path", "notebook_path", "url", "pattern", "query", "prompt", "description"] {
+    for key in [
+        "command",
+        "file_path",
+        "notebook_path",
+        "url",
+        "pattern",
+        "query",
+        "prompt",
+        "description",
+    ] {
         if let Some(v) = tool_input[key].as_str().filter(|v| !v.is_empty()) {
-            let v = if key.ends_with("path") { v.rsplit(['/', '\\']).next().unwrap_or(v) } else { v };
-            return v.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect();
+            let v = if key.ends_with("path") {
+                v.rsplit(['/', '\\']).next().unwrap_or(v)
+            } else {
+                v
+            };
+            return v
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(120)
+                .collect();
         }
     }
     String::new()
@@ -135,14 +203,26 @@ fn detail(tool_input: &Value) -> String {
 fn wait_secs(data: &Path) -> u64 {
     std::env::set_var("KNOBDECK_PLUGIN_DATA", data);
     knobdeck_sdk::load_env();
-    knobdeck_sdk::env_or("APPROVAL_WAIT", "30").trim().parse().unwrap_or(30).min(300)
+    knobdeck_sdk::env_or("APPROVAL_WAIT", "30")
+        .trim()
+        .parse()
+        .unwrap_or(30)
+        .min(300)
 }
 
-fn permission(data: &Path, session: &str, ev: &Value, with: &dyn Fn(Option<Status>)) -> Option<String> {
+fn permission(
+    data: &Path,
+    session: &str,
+    ev: &Value,
+    with: &dyn Fn(Option<Status>),
+) -> Option<String> {
     with(Some(Status::Approval));
     let wait = wait_secs(data);
     // Wait only while the plugin runs and a key can answer; otherwise Claude Code asks at once.
-    let can_answer = || store::fresh(&store::alive_path(data), Duration::from_secs(6)) && store::fresh(&store::approvals_flag(data), Duration::from_secs(6));
+    let can_answer = || {
+        store::fresh(&store::alive_path(data), Duration::from_secs(6))
+            && store::fresh(&store::approvals_flag(data), Duration::from_secs(6))
+    };
     if wait == 0 || !can_answer() {
         return None;
     }
@@ -170,8 +250,15 @@ fn permission(data: &Path, session: &str, ev: &Value, with: &dyn Fn(Option<Statu
     store::clear_request(data, &req.id);
     let allow = answer?;
     with(Some(Status::Working));
-    let decision = if allow { json!({"behavior": "allow"}) } else { json!({"behavior": "deny", "message": "The user denied this from KnobDeck."}) };
-    Some(json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}}).to_string())
+    let decision = if allow {
+        json!({"behavior": "allow"})
+    } else {
+        json!({"behavior": "deny", "message": "The user denied this from KnobDeck."})
+    };
+    Some(
+        json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}})
+            .to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -180,7 +267,10 @@ mod tests {
 
     #[test]
     fn details() {
-        assert_eq!(detail(&json!({"command": "npm  test\n--watch"})), "npm test --watch");
+        assert_eq!(
+            detail(&json!({"command": "npm  test\n--watch"})),
+            "npm test --watch"
+        );
         assert_eq!(detail(&json!({"file_path": "/a/b/main.rs"})), "main.rs");
         assert_eq!(detail(&json!({})), "");
     }
@@ -191,23 +281,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let ev = |name: &str, extra: Value| {
             let mut v = json!({"session_id": "s1", "cwd": "/w/proj", "hook_event_name": name});
-            v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
             v
         };
         claude(&dir, &ev("UserPromptSubmit", json!({"prompt": "hi"})));
-        assert_eq!(store::read_session(&dir, "claude", "s1").unwrap().status, Status::Working);
-        claude(&dir, &ev("Notification", json!({"notification_type": "permission_prompt"})));
-        assert_eq!(store::read_session(&dir, "claude", "s1").unwrap().status, Status::Approval);
+        assert_eq!(
+            store::read_session(&dir, "claude", "s1").unwrap().status,
+            Status::Working
+        );
+        claude(
+            &dir,
+            &ev(
+                "Notification",
+                json!({"notification_type": "permission_prompt"}),
+            ),
+        );
+        assert_eq!(
+            store::read_session(&dir, "claude", "s1").unwrap().status,
+            Status::Approval
+        );
         claude(&dir, &ev("PostToolUse", json!({})));
-        assert_eq!(store::read_session(&dir, "claude", "s1").unwrap().status, Status::Working);
+        assert_eq!(
+            store::read_session(&dir, "claude", "s1").unwrap().status,
+            Status::Working
+        );
         claude(&dir, &ev("Stop", json!({})));
-        assert_eq!(store::read_session(&dir, "claude", "s1").unwrap().status, Status::Done);
+        assert_eq!(
+            store::read_session(&dir, "claude", "s1").unwrap().status,
+            Status::Done
+        );
         // No plugin running: a permission request gets no decision (Claude Code asks as usual).
-        assert_eq!(claude(&dir, &ev("PermissionRequest", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}}))), None);
+        assert_eq!(
+            claude(
+                &dir,
+                &ev(
+                    "PermissionRequest",
+                    json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})
+                )
+            ),
+            None
+        );
         claude(&dir, &ev("SessionEnd", json!({})));
         assert!(store::read_session(&dir, "claude", "s1").is_none());
-        codex(&dir, &json!({"type": "agent-turn-complete", "thread-id": "t1", "cwd": "/w/x"}));
-        assert_eq!(store::read_session(&dir, "codex", "t1").unwrap().status, Status::Done);
+        codex(
+            &dir,
+            &json!({"type": "agent-turn-complete", "thread-id": "t1", "cwd": "/w/x"}),
+        );
+        assert_eq!(
+            store::read_session(&dir, "codex", "t1").unwrap().status,
+            Status::Done
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -28,7 +28,6 @@ loaded at run time on Linux, so builds need no ALSA headers).
 | [win-tools](./win-tools) | Window management, per-app volume, audio devices + mic, system actions (`windows` crate) | Windows |
 | [mac-tools](./mac-tools) | Window management (Accessibility API), window switcher, Spaces/system actions, stats, audio devices + mic mute and level, Menu Command, automation | macOS |
 | [linux-tools](./linux-tools) | Window management (KWin scripting / KnobDeck GNOME extension), workspaces, desktop actions, stats, per-app volume, audio devices, power profiles, Wi-Fi/Bluetooth | Linux (KDE, GNOME) |
-| [ai-stats](./ai-stats) | Claude and Codex plan limits (5 h / weekly gauges) and 30-day token usage, from the CLIs' local logins and transcripts | Windows, macOS, Linux |
 | [elgato-lights](./elgato-lights) | Key Light, Ring Light and Light Strip over their local HTTP API, found by mDNS | Windows, macOS, Linux |
 | [weather](./weather) | Current weather, 7-day and hourly forecast, air quality (Open-Meteo, no key) | Windows, macOS, Linux |
 | [clocks](./clocks) | Clock for any time zone, world clock wheel, countdown timer, stopwatch | Windows, macOS, Linux |
@@ -43,7 +42,7 @@ loaded at run time on Linux, so builds need no ALSA headers).
 | [game-launcher](./game-launcher) | Launch installed Steam games (every OS) and Epic Games Store games (Windows, macOS) from a key or wheel; launcher pages | Windows, macOS, Linux |
 | [ytmusic](./ytmusic) | YouTube Music Desktop App (YTMDesktop 2.x) Companion Server: playback, likes, volume, repeat, queue, playlists | Windows, macOS, Linux |
 | [slides](./slides) | Slide shows: PowerPoint (COM on Windows, AppleScript on macOS), Keynote (macOS), LibreOffice Impress (Impress Remote protocol, every OS) | Windows, macOS, Linux |
-| [coding-agents](./coding-agents) | Claude Code and Codex session status (working, needs approval, your turn) through their hooks / `notify`; approve or deny Claude Code permission requests from a key | Windows, macOS, Linux |
+| [coding-agents](./coding-agents) | Claude Code and Codex session status (working, needs approval, your turn) through their hooks / `notify`; approve or deny Claude Code permission requests from a key; Claude and Codex plan limits (5 h / weekly gauges) | Windows, macOS, Linux |
 | [ai-actions](./ai-actions) | Fix, rewrite, translate, summarize or explain the selected text with the user's own model (Anthropic, OpenAI-compatible, Ollama); the answer replaces the text, goes on the clipboard or in a notification | Windows, macOS, Linux |
 | [web-requests](./web-requests) | HTTP requests and webhooks with placeholders, a live JSON value on a key, an on/off toggle; tokens in the credential store | Windows, macOS, Linux |
 | [now-playing](./now-playing) | Any media player's title, artist and cover, play/pause, next, previous, position: Windows SMTC, Linux MPRIS, macOS Music and Spotify (AppleScript) | Windows, macOS, Linux |

@@ -1,6 +1,6 @@
 //! Coding Agents plugin for KnobDeck: what Claude Code and Codex sessions are doing (working,
 //! waiting for approval, your turn) on keys, and approve or deny Claude Code's permission
-//! requests from the deck.
+//! requests from the deck, and shows their plan limits (5 h / weekly) on keys.
 //!
 //! The agents report through their own hook interfaces: Claude Code hooks and Codex's `notify`
 //! program both run this binary in hook mode (`hook.rs`), which records each session in the data
@@ -10,10 +10,15 @@ mod codex;
 mod hook;
 #[allow(dead_code)] // the rest is used by setup
 mod install;
+mod limits;
 mod store;
 
+use base64::Engine;
 use knobdeck_sdk::input::{self, InputExt};
-use knobdeck_sdk::{json, load_env, Action, Ctx, Error, InitialCtx, Plugin, Result, Runtime, Value, Visual};
+use knobdeck_sdk::{
+    json, load_env, Action, Ctx, Error, InitialCtx, Plugin, Result, Runtime, Value, Visual,
+};
+use limits::Provider;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -49,13 +54,20 @@ fn sessions() -> Vec<Session> {
     }
     for s in &mut all {
         let age = now.saturating_sub(s.updated);
-        if (s.status == Status::Working && age > STALE_MS) || (s.status == Status::Done && age > DONE_FRESH_MS) {
+        if (s.status == Status::Working && age > STALE_MS)
+            || (s.status == Status::Done && age > DONE_FRESH_MS)
+        {
             s.status = Status::Idle;
         }
     }
     let filter = knobdeck_sdk::env_or("AGENTS", "claude,codex");
     all.retain(|s| filter.split(',').any(|a| a == s.agent));
-    all.sort_by(|a, b| a.status.rank().cmp(&b.status.rank()).then(b.updated.cmp(&a.updated)));
+    all.sort_by(|a, b| {
+        a.status
+            .rank()
+            .cmp(&b.status.rank())
+            .then(b.updated.cmp(&a.updated))
+    });
     *guard = Some((Instant::now(), all.clone()));
     all
 }
@@ -65,7 +77,9 @@ fn forget_snapshot() {
 }
 
 fn of_agent(all: Vec<Session>, agent: &str) -> Vec<Session> {
-    all.into_iter().filter(|s| agent.is_empty() || agent == "all" || s.agent == agent).collect()
+    all.into_iter()
+        .filter(|s| agent.is_empty() || agent == "all" || s.agent == agent)
+        .collect()
 }
 
 /// " · 3m" once a status has lasted a minute (seconds would redraw the key every second).
@@ -79,12 +93,21 @@ fn ago(ms: u64) -> String {
 }
 
 fn session_visual(s: &Session, show_agent: bool) -> Visual {
-    let head = if show_agent { format!("{} · {}", store::agent_name(&s.agent), s.name()) } else { s.name() };
+    let head = if show_agent {
+        format!("{} · {}", store::agent_name(&s.agent), s.name())
+    } else {
+        s.name()
+    };
     let tail = match s.status {
-        Status::Working | Status::Approval | Status::Input | Status::Done => format!("{}{}", s.status.label(), ago(s.since)),
+        Status::Working | Status::Approval | Status::Input | Status::Done => {
+            format!("{}{}", s.status.label(), ago(s.since))
+        }
         Status::Idle => s.status.label().to_string(),
     };
-    Visual::new().label(format!("{head}\n{tail}")).icon(s.status.icon()).state(status_state(s.status))
+    Visual::new()
+        .label(format!("{head}\n{tail}"))
+        .icon(s.status.icon())
+        .state(status_state(s.status))
 }
 
 fn status_state(s: Status) -> &'static str {
@@ -105,15 +128,27 @@ fn status_visual(ic: &InitialCtx) -> Result<Visual> {
     let Some(first) = list.first() else {
         return Ok(Visual::new().label("No sessions").icon("bot").state("idle"));
     };
-    let picked = PICKED.lock().unwrap().get_or_insert_with(HashMap::new).get(&ic.instance_id).cloned();
+    let picked = PICKED
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .get(&ic.instance_id)
+        .cloned();
     // A session that needs you always wins; otherwise the one picked by pressing.
     let s = match picked {
-        Some((agent, id)) if !first.status.needs_you() => list.iter().find(|s| s.agent == agent && s.id == id).unwrap_or(first),
+        Some((agent, id)) if !first.status.needs_you() => list
+            .iter()
+            .find(|s| s.agent == agent && s.id == id)
+            .unwrap_or(first),
         _ => first,
     };
     let mut v = session_visual(s, ic.input_bool("show_agent"));
     if list.len() > 1 {
-        let pos = list.iter().position(|x| x.agent == s.agent && x.id == s.id).unwrap_or(0) + 1;
+        let pos = list
+            .iter()
+            .position(|x| x.agent == s.agent && x.id == s.id)
+            .unwrap_or(0)
+            + 1;
         let label = v.label.clone().unwrap_or_default();
         v = v.label(format!("{label} ({pos}/{})", list.len()));
     }
@@ -127,13 +162,22 @@ fn press_status(ctx: &Ctx) -> Result {
     }
     let mut guard = PICKED.lock().unwrap();
     let map = guard.get_or_insert_with(HashMap::new);
-    let cur = map.get(&ctx.instance_id).and_then(|(a, i)| list.iter().position(|s| &s.agent == a && &s.id == i));
+    let cur = map
+        .get(&ctx.instance_id)
+        .and_then(|(a, i)| list.iter().position(|s| &s.agent == a && &s.id == i));
     let next = &list[cur.map_or(1, |c| c + 1) % list.len()];
     // Looking at a finished session is seeing it: it stops asking for attention.
     acknowledge(next);
-    map.insert(ctx.instance_id.clone(), (next.agent.clone(), next.id.clone()));
+    map.insert(
+        ctx.instance_id.clone(),
+        (next.agent.clone(), next.id.clone()),
+    );
     drop(guard);
-    let ic = InitialCtx { instance_id: ctx.instance_id.clone(), action_id: ctx.action_id.clone(), inputs: ctx.inputs.clone() };
+    let ic = InitialCtx {
+        instance_id: ctx.instance_id.clone(),
+        action_id: ctx.action_id.clone(),
+        inputs: ctx.inputs.clone(),
+    };
     ctx.set_visual(status_visual(&ic)?);
     Ok(())
 }
@@ -150,24 +194,46 @@ fn acknowledge(s: &Session) {
 
 fn answer_visual(allow: bool) -> Result<Visual> {
     let pending = store::pending(&data());
-    let (verb, icon) = if allow { ("Approve", "check") } else { ("Deny", "x") };
+    let (verb, icon) = if allow {
+        ("Approve", "check")
+    } else {
+        ("Deny", "x")
+    };
     Ok(match pending.first() {
         Some(p) => {
-            let more = if pending.len() > 1 { format!(" (+{})", pending.len() - 1) } else { String::new() };
+            let more = if pending.len() > 1 {
+                format!(" (+{})", pending.len() - 1)
+            } else {
+                String::new()
+            };
             let short: String = p.summary().chars().take(40).collect();
-            Visual::new().label(format!("{verb}{more}\n{short}")).icon(icon).state("attention")
+            Visual::new()
+                .label(format!("{verb}{more}\n{short}"))
+                .icon(icon)
+                .state("attention")
         }
-        None => Visual::new().label(format!("{verb}\nNothing to answer")).icon(icon).state("idle"),
+        None => Visual::new()
+            .label(format!("{verb}\nNothing to answer"))
+            .icon(icon)
+            .state("idle"),
     })
 }
 
 fn press_answer(ctx: &Ctx, allow: bool) -> Result {
     let d = data();
     let Some(p) = store::pending(&d).into_iter().next() else {
-        return Err(Error::msg(if setup_done(&d) { "No request is waiting for an answer" } else { "Run this plugin's setup to connect Claude Code" }));
+        return Err(Error::msg(if setup_done(&d) {
+            "No request is waiting for an answer"
+        } else {
+            "Run this plugin's setup to connect Claude Code"
+        }));
     };
     store::answer(&d, &p.id, allow)?;
-    ctx.log(format!("{} {}", if allow { "approved" } else { "denied" }, p.summary()));
+    ctx.log(format!(
+        "{} {}",
+        if allow { "approved" } else { "denied" },
+        p.summary()
+    ));
     forget_snapshot();
     ctx.set_visual(answer_visual(allow)?);
     Ok(())
@@ -199,7 +265,9 @@ fn heartbeat(rt: Runtime) {
     let mut last_prune = Instant::now() - Duration::from_secs(3600);
     loop {
         touch(&store::alive_path(&d));
-        let answering = ["approve", "deny", "approvals-wheel"].iter().any(|a| !rt.instances_of(a).is_empty());
+        let answering = ["approve", "deny", "approvals-wheel"]
+            .iter()
+            .any(|a| !rt.instances_of(a).is_empty());
         if answering {
             touch(&store::approvals_flag(&d));
         } else {
@@ -213,8 +281,127 @@ fn heartbeat(rt: Runtime) {
     }
 }
 
+// ── Plan limits ───────────────────────────────────────────────────────────────
+
+/// Tiles only read the files `limits::poll` keeps; the network is never touched from a tile.
+const LIMITS_LIVE: Duration = Duration::from_secs(5);
+
+fn svg_uri(svg: String) -> String {
+    format!(
+        "data:image/svg+xml;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(svg)
+    )
+}
+
+/// Ring gauge in the provider's colour; red once nearly used up.
+fn gauge(pct: f64, color: &str) -> String {
+    let p = pct.clamp(0.0, 100.0).round();
+    let color = if p >= 90.0 { "#ef4444" } else { color };
+    let circ = 2.0 * std::f64::consts::PI * 40.0;
+    svg_uri(format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="{color}" stroke-opacity="0.25" stroke-width="10"/><circle cx="50" cy="50" r="40" fill="none" stroke="{color}" stroke-width="10" stroke-linecap="round" stroke-dasharray="{:.1} {circ:.1}" transform="rotate(-90 50 50)"/><text x="50" y="61" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="30" font-weight="600" fill="#888888">{p:.0}</text></svg>"##,
+        circ * p / 100.0
+    ))
+}
+
+fn limits_visual(p: Provider, window: &str) -> Visual {
+    let (name, color) = match p {
+        Provider::Claude => ("Claude", "#D97757"),
+        Provider::Codex => ("Codex", "#6C7BFF"),
+    };
+    let d = data();
+    let snap = limits::read(&d, p);
+    let now = store::now_ms();
+    match snap.wins.get(window) {
+        Some(w) => {
+            let w = w.at(now);
+            let reset = w
+                .resets_at
+                .map(|t| format!(" · {}", limits::left(t)))
+                .unwrap_or_default();
+            let wname = if w.name().is_empty() {
+                window.to_string()
+            } else {
+                w.name()
+            };
+            Visual::new()
+                .label(format!("{name} {wname} {:.0}%{reset}", w.used))
+                .icon(gauge(w.used, color))
+        }
+        None if !snap.wins.is_empty() => Visual::new()
+            .label(format!("{name} · not on this plan"))
+            .icon("circle-off"),
+        None => Visual::new()
+            .label(format!("{name} · {}", limits::why_empty(&d, p)))
+            .icon("circle-alert"),
+    }
+}
+
+fn limits_action(
+    id: &str,
+    label: &str,
+    p: Provider,
+    windows: &'static [(&'static str, &'static str)],
+) -> Action {
+    Action::button(id, label)
+        .icon("gauge")
+        .inputs(vec![
+            input::select("window", "Usage type", windows).with("default", windows[0].0)
+        ])
+        .live(LIMITS_LIVE, move |ic| {
+            Ok(limits_visual(
+                p,
+                &window_of(&ic.input_str("window"), windows),
+            ))
+        })
+        // Press: look again now, within the minimum gap and any back-off.
+        .on_press(move |ctx| {
+            limits::request_refresh(p);
+            ctx.set_visual(limits_visual(
+                p,
+                &window_of(&ctx.input_str("window"), windows),
+            ));
+            Ok(())
+        })
+}
+
+fn window_of(given: &str, windows: &[(&str, &str)]) -> String {
+    if given.is_empty() {
+        windows[0].0
+    } else {
+        given
+    }
+    .to_string()
+}
+
+/// Keeps the limits files current for the providers that have a key placed, one provider at a
+/// time on this thread so a slow endpoint never holds up the tiles or the hooks' heartbeat.
+fn limits_loop(rt: Runtime) {
+    let d = rt.data_dir().to_path_buf();
+    loop {
+        for (p, id) in [
+            (Provider::Claude, "claude-limits"),
+            (Provider::Codex, "codex-limits"),
+        ] {
+            if !rt.instances_of(id).is_empty() {
+                limits::poll(&d, p);
+            }
+        }
+        std::thread::sleep(Duration::from_secs(10));
+    }
+}
+
 fn agent_input() -> Value {
-    input::select("agent", "Sessions of", &[("all", "Claude Code and Codex"), ("claude", "Claude Code"), ("codex", "Codex")]).default_value("all")
+    input::select(
+        "agent",
+        "Sessions of",
+        &[
+            ("all", "Claude Code and Codex"),
+            ("claude", "Claude Code"),
+            ("codex", "Codex"),
+        ],
+    )
+    .default_value("all")
 }
 
 fn main() {
@@ -233,13 +420,16 @@ fn main() {
         .setup_inputs(vec![
             input::checkbox("claude", "Connect Claude Code (adds KnobDeck's hooks to ~/.claude/settings.json)").default_value(true),
             input::checkbox("codex", "Connect Codex (sets notify in ~/.codex/config.toml)").default_value(true),
+            input::checkbox("limits", "Show Claude's plan limits (adds KnobDeck's status line to ~/.claude/settings.json; your own status line keeps working)").default_value(true),
             input::select("approval_wait", "Approve or Deny keys: wait for a press for up to", &[("15", "15 seconds"), ("30", "30 seconds"), ("60", "1 minute"), ("120", "2 minutes"), ("0", "Don't wait (answer in the terminal)")])
                 .default_value("30")
                 .with("help", "Only while an Approve or Deny key is placed. Claude Code shows its own prompt when the time is up."),
         ])
         .on_ready(|rt| {
             let rt = rt.clone();
+            let rt2 = rt.clone();
             std::thread::spawn(move || heartbeat(rt));
+            std::thread::spawn(move || limits_loop(rt2));
             Ok(())
         })
         .on_shutdown(|rt| {
@@ -276,6 +466,8 @@ fn main() {
                     Ok(())
                 }),
         )
+        .action(limits_action("claude-limits", "Claude Limits", Provider::Claude, &[("5h", "5-hour"), ("7d", "7-day (weekly)"), ("fable", "Fable 7-day")]))
+        .action(limits_action("codex-limits", "Codex Limits", Provider::Codex, &[("primary", "Primary (5-hour)"), ("secondary", "Secondary (weekly)")]))
         .action(Action::button("approve", "Approve").icon("check").live(LIVE, |_| answer_visual(true)).on_press(|ctx| press_answer(ctx, true)))
         .action(Action::button("deny", "Deny").icon("x").live(LIVE, |_| answer_visual(false)).on_press(|ctx| press_answer(ctx, false)))
         .action(
