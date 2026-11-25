@@ -31,25 +31,66 @@ fn memory() -> Option<f64> {
     (total > 0.0).then(|| (total - avail) * 100.0 / total)
 }
 
-/// AMD and Intel (xe) report `gpu_busy_percent` in sysfs; NVIDIA through nvidia-smi.
-fn gpu() -> Option<f64> {
-    let busiest = std::fs::read_dir("/sys/class/drm")
-        .ok()?
+/// One GPU: a stable id (`drm:card1`, `nvidia:0`), a display name and its use.
+pub struct Gpu {
+    pub id: String,
+    pub name: String,
+    pub busy: f64,
+}
+
+fn vendor_name(vendor: &str) -> &'static str {
+    match vendor {
+        "0x1002" => "AMD GPU",
+        "0x8086" => "Intel GPU",
+        _ => "GPU",
+    }
+}
+
+/// Every GPU: AMD and Intel (xe) report `gpu_busy_percent` in sysfs; NVIDIA through nvidia-smi.
+pub fn gpus() -> Vec<Gpu> {
+    let mut out = Vec::new();
+    let mut cards: Vec<_> = std::fs::read_dir("/sys/class/drm")
+        .into_iter()
+        .flatten()
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().starts_with("card") && !e.file_name().to_string_lossy().contains('-'))
-        .filter_map(|e| std::fs::read_to_string(e.path().join("device/gpu_busy_percent")).ok()?.trim().parse::<f64>().ok())
-        .reduce(f64::max);
-    if busiest.is_some() {
-        return busiest;
+        .collect();
+    cards.sort_by_key(|e| e.file_name());
+    for e in cards {
+        let dev = e.path().join("device");
+        let Some(busy) = std::fs::read_to_string(dev.join("gpu_busy_percent")).ok().and_then(|v| v.trim().parse::<f64>().ok()) else { continue };
+        let card = e.file_name().to_string_lossy().into_owned();
+        let name = std::fs::read_to_string(dev.join("product_name"))
+            .ok()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| vendor_name(std::fs::read_to_string(dev.join("vendor")).unwrap_or_default().trim()).to_string());
+        out.push(Gpu { id: format!("drm:{card}"), name: format!("{name} ({card})"), busy });
     }
-    let out = std::process::Command::new("nvidia-smi").args(["--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"]).output().ok()?;
-    String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.trim().parse::<f64>().ok()).reduce(f64::max)
+    let smi = std::process::Command::new("nvidia-smi").args(["--query-gpu=index,name,utilization.gpu", "--format=csv,noheader,nounits"]).output();
+    if let Ok(smi) = smi {
+        for line in String::from_utf8_lossy(&smi.stdout).lines() {
+            let f: Vec<&str> = line.split(',').map(str::trim).collect();
+            if let [index, name, busy] = f[..] {
+                if let Ok(busy) = busy.parse::<f64>() {
+                    out.push(Gpu { id: format!("nvidia:{index}"), name: name.to_string(), busy });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Use of the chosen GPU (`gpu` = an id from [`gpus`]); empty or unknown means the busiest one.
+fn gpu(choice: &str) -> Option<f64> {
+    let all = gpus();
+    all.iter().find(|g| g.id == choice).map(|g| g.busy).or_else(|| all.iter().map(|g| g.busy).reduce(f64::max))
 }
 
 /// (display name, percent) for `cpu`, `gpu` or `memory`; `None` while unavailable.
-pub fn read(stat: &str) -> Result<(&'static str, Option<f64>)> {
+pub fn read(stat: &str, gpu_choice: &str) -> Result<(&'static str, Option<f64>)> {
     Ok(match stat {
-        "gpu" => ("GPU", gpu()),
+        "gpu" => ("GPU", gpu(gpu_choice)),
         "memory" => ("Memory", memory()),
         "cpu" | "" => ("CPU", cpu()),
         other => return Err(Error::msg(format!("Unknown stat \"{other}\""))),
@@ -74,14 +115,14 @@ mod tests {
 
     #[test]
     fn reads_stats() {
-        let _ = read("cpu").unwrap();
+        let _ = read("cpu", "").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(300));
-        let cpu = read("cpu").unwrap().1.unwrap();
+        let cpu = read("cpu", "").unwrap().1.unwrap();
         assert!((0.0..=100.0).contains(&cpu));
-        let mem = read("memory").unwrap().1.unwrap();
+        let mem = read("memory", "").unwrap().1.unwrap();
         assert!((0.0..=100.0).contains(&mem));
-        eprintln!("cpu={cpu:.1} mem={mem:.1} gpu={:?}", read("gpu").unwrap().1);
-        assert!(read("disk").is_err());
+        eprintln!("cpu={cpu:.1} mem={mem:.1} gpu={:?}", read("gpu", "").unwrap().1);
+        assert!(read("disk", "").is_err());
         assert!(gauge(150.0).starts_with("data:image/svg+xml;base64,"));
     }
 }

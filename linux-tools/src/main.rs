@@ -612,6 +612,15 @@ mod app {
                 Ok(())
             })
             // ── Queries ──
+            // One GPU: just "Automatic". Several: pick one, or follow the busiest.
+            .query("get-gpus", |_| {
+                let all = stats::gpus();
+                let mut opts = vec![json!({"value": "auto", "label": if all.len() > 1 { "Busiest GPU" } else { "Automatic" }})];
+                if all.len() > 1 {
+                    opts.extend(all.iter().map(|g| json!({"value": g.id, "label": g.name})));
+                }
+                Ok(Value::Array(opts))
+            })
             .query("get-monitors", |_| {
                 let mut opts = vec![json!({"value": "current", "label": "Current Monitor (where window is)"})];
                 for o in wm::outputs()? {
@@ -781,9 +790,11 @@ mod app {
             // A button (opens the system monitor) whose tile shows the chosen stat live.
             .action(
                 button("system-stats", "System Stats", "gauge", system::system_monitor)
-                    .inputs(vec![input::select("stat", "Show", &[("cpu", "CPU"), ("gpu", "GPU"), ("memory", "Memory")]).with("default", "cpu")])
+                    .inputs(vec![input::select("stat", "Show", &[("cpu", "CPU"), ("gpu", "GPU"), ("memory", "Memory")]).with("default", "cpu"),
+                        input::query_select("gpu", "GPU", "get-gpus", &[]).with("default", "auto").with("showIf", json!({"key": "stat", "equals": "gpu"})),
+                    ])
                     .live(Duration::from_secs(1), |ic| {
-                        let (name, pct) = stats::read(&ic.input_str("stat"))?;
+                        let (name, pct) = stats::read(&ic.input_str("stat"), &ic.input_str("gpu"))?;
                         Ok(match pct {
                             Some(p) => Visual::new().label(format!("{name} {p:.0}%")).icon(stats::gauge(p)),
                             None if name == "CPU" => Visual::new().label(format!("{name} …")),
