@@ -8,7 +8,6 @@ mod archive;
 mod images;
 mod paths;
 mod pdf;
-mod signals;
 mod sys;
 
 use knobdeck_sdk::input::{self, InputExt};
@@ -281,9 +280,6 @@ fn main() {
             "Act on the files selected in Dolphin: convert and resize images, merge PDFs, zip, rename, copy paths."
         })
         .icon("app-icon.svg")
-        .signals(signals::declarations())
-        .on_signal_read(|id, _| signals::read(id))
-        .on_signal_demand(signals::demand)
         .action(files_action("convert-image", "Convert Images", "image").inputs(vec![input::select("format", "To", &[("png", "PNG"), ("jpeg", "JPEG"), ("webp", "WebP (lossless)")]).default_value("png")]))
         .action(files_action("resize-image", "Resize Images", "scaling").inputs(vec![
             input::select("mode", "By", &[("edge", "Longest edge (px)"), ("percent", "Percent")]).default_value("edge"),
