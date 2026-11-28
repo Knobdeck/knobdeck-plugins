@@ -418,6 +418,16 @@
       "featured": true,
       "sort": 21
     },
+    "usb-camera": {
+      "name": "USB Camera",
+      "summary": "Webcam sliders and switches for every control the camera supports: brightness, white balance, exposure, focus, zoom, pan and tilt.",
+      "tags": [
+        "Streaming",
+        "Camera"
+      ],
+      "featured": false,
+      "sort": 113
+    },
     "vlc": {
       "name": "VLC",
       "summary": "Playback controls for VLC media player.",
