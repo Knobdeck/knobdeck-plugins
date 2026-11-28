@@ -75,6 +75,7 @@ loaded at run time on Linux, so builds need no ALSA headers).
 | [toolbox](./toolbox) | Counter on a key or a dial (kept across restarts), dice, coin flip, random pick from your own list, tally rows to a CSV file; all local | Windows, macOS, Linux |
 | [text-tools](./text-tools) | Transforms on the selected text (case, trim, slugify, URL / Base64 encode and decode, JSON format / minify) onto the clipboard or in place of the selection; word count; nine saved text slots | Windows, macOS, Linux |
 | [flight-sim](./flight-sim) | Microsoft Flight Simulator 2020 and 2024 over SimConnect (`SimConnect.dll` from the MSFS SDK or the sim, loaded at run time): autopilot master and modes with lit state, heading / altitude / VS / speed / course dials, COM and NAV standby frequency dials (MHz, kHz; 25 or 8.33 kHz) and swap, transponder, gear, flaps, spoilers, parking brake, lights, battery / alternator / avionics, trim, altimeter (inHg / hPa, STD), pause, sim rate, flight readouts, any K-event, any SimVar | Windows |
+| [usb-camera](./usb-camera) | USB webcam (UVC) controls: sliders and switches for every control the camera reports: image, white balance, exposure, focus, zoom, pan / tilt; V4L2 on Linux, DirectShow on Windows | Windows, Linux |
 
 The `vscode`, `intellij`, `browser-plugin`, `blender`, `ableton` and `lightroom-classic` plugins talk to companions that run
 *inside* VS Code, JetBrains IDEs, browsers, Blender, Ableton Live and Lightroom Classic (an editor extension, an IDE plugin, a

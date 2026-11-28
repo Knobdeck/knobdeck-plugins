@@ -100,6 +100,7 @@ Current decisions (keep this list up to date):
 | toolbox | none needed (counters, dice, coin, random pick, a CSV tally file; all local) | none |
 | text-tools | the selection from `knobdeck_sdk::os` (UI Automation, Accessibility, AT-SPI); transforms in Rust; clipboard through Win32 / NSPasteboard / Klipper / the GNOME extension; slots in the data folder | Entering the result in place of the selection (Transform's "in place" output, Paste Slot), like AI Actions: Windows and Linux paste it (clipboard + Ctrl+V), macOS types it as Unicode key events |
 | flight-sim | SimConnect, the sim's own client API (`SimConnect.dll` loaded at run time from the MSFS SDK (`%MSFS_SDK%` / `%MSFS2024_SDK%`), the running sim's folder or the plugin's data folder; not bundled, the SDK licence doesn't clearly allow redistributing it): K-events by name (`SimConnect_MapClientEventToSimEvent` + `TransmitClientEvent_EX1`), SimVars through data requests every changed sim frame, the `Pause` system event | none |
+| usb-camera | the camera's own UVC controls through the OS: V4L2 ioctls on Linux (controls enumerated from the driver with `VIDIOC_QUERY_EXT_CTRL`, `VIDIOC_G_CTRL` / `S_CTRL`), DirectShow `IAMVideoProcAmp` / `IAMCameraControl` on Windows. Control ioctls never touch a running stream, so OBS and meeting apps keep the camera | none. Linux and Windows only for now (macOS needs raw UVC requests through IOKit). Relative / speed controls (continuous zoom, pan speed) aren't shown: the absolute controls cover them |
 
 ## Rule 2: every OS stays working
 

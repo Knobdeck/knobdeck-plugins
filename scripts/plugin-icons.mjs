@@ -41,7 +41,7 @@ const GLYPH = {
   slides: "presentation", soundboard: "speaker", speedtest: "gauge", streamerbot: "bot",
   "text-to-speech": "speech", "text-tools": "type", toolbox: "wrench", voicemeeter: "audio-lines",
   voicemod: "mic-vocal", "vtube-studio": "smile", weather: "cloud-sun", "web-requests": "webhook",
-  "win-tools": "app-window", wled: "rainbow",
+  "usb-camera": "webcam", "win-tools": "app-window", wled: "rainbow",
 };
 
 /// First matching tag → colour (the app's kind palette, so plugins sit with the rest of the UI).
